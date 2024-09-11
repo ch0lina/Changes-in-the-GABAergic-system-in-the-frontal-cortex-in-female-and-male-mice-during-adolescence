@@ -1,0 +1,94 @@
+//file data
+path_name=getDirectory("image");
+filename=getInfo("image.filename")
+im_title=getTitle();
+basename=substring(filename, 0, lengthOf(filename)-4);
+structure=substring(im_title, lengthOf(im_title) -4, lengthOf(im_title));
+
+selectWindow(im_title);
+run("Stack to Images");
+//closing channel 04 (empty)
+close();
+
+//CHANNEL 1 - parvalbumin (PV)
+selectWindow(basename+"-0001");
+run("Enhance Contrast", "saturated=0.35");
+run("Apply LUT");
+setAutoThreshold("Default dark no-reset");
+setThreshold(148, 255);
+run("Convert to Mask");
+
+//CHANNEL 2 - calretinin (CAL)
+selectWindow(basename+"-0002");
+//run("Brightness/Contrast...");
+run("Enhance Contrast", "saturated=0.35");
+run("Apply LUT");
+setAutoThreshold("Default dark no-reset");
+setThreshold(161, 255, "raw");
+run("Convert to Mask");
+
+//CHANNEL 3 - GAD67
+selectWindow(basename+"-0003");
+run("Enhance Contrast", "saturated=0.35");
+run("Apply LUT");
+setAutoThreshold("Default dark no-reset");
+setThreshold(101, 255, "raw");
+run("Convert to Mask");
+
+//making ROI 
+run("Merge Channels...", "c1=[" + basename + "-0001] c2=[" + basename + "-0002] c3=[" + basename + "-0003] create");
+run("ROI Manager...");
+Property.set("CompositeProjection", "null");
+Stack.setDisplayMode("color");
+
+setTool("freehand");
+waitForUser("Select the area to count cells, the whole image = cttr+a");
+roiManager("Add")
+
+run("Measure");
+saveAs("Results", path_name+"\\"+basename+""+"_"+structure+"_area.csv");
+selectWindow("Results");
+run("Close");
+
+//saving ROI
+roiManager("Select", 0);
+roiManager("Save", path_name+"\\"+basename+""+"_"+structure+".roi");		
+
+roiManager("Select", 0);
+frames=nSlices
+for(i=0; i<frames; i++) {
+	currentslice=i+1;
+	setSlice(currentslice);
+	roiManager("Add");
+	}
+
+//counting cells
+//channel PV - 01
+roiManager("Select", 1);
+run("Analyze Particles...", "size=25-700 display clear include summarize overlay");
+saveAs("Results", path_name+"\\"+basename+""+"_"+structure+"_PV01.csv");
+run("Close");
+
+//channel CAL - 02
+roiManager("Select", 2);
+run("Analyze Particles...", "size=45-500 display clear include summarize overlay");
+saveAs("Results", path_name+"\\"+basename+""+"_"+structure+"_CAL02.csv");
+run("Close");
+
+//channel GAD67 - 03
+roiManager("Select", 3);
+run("Analyze Particles...", "size=50-500 display clear include summarize overlay");
+saveAs("Results", path_name+"\\"+basename+""+"_"+structure+"_GAD6703.csv");
+run("Close");
+
+//Closing unnecesary windows
+selectWindow("ROI Manager");
+run("Close");
+selectWindow("Results");
+run("Close");
+selectWindow("Composite");
+run("Close");
+//run("Close All");
+
+//looping a macro
+runMacro("FIJI_script.ijm");
