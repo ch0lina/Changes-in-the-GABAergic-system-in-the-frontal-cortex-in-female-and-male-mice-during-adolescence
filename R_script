@@ -1,0 +1,418 @@
+require(tidyverse)
+require(ggplot2)
+require(magrittr)
+require(readr)
+require(rstatix)
+require(strex)
+require(outliers)
+
+####creating list "miniatura_list"
+miniatura_list <- read.csv2(file = "Miniatura_list_goodBIN.csv")
+miniatura_list <- filter(miniatura_list, is.finite(Staining.batch))[, 1:18]
+
+###make a list (vector with names) of all directories to be searched
+list_of_folders_with_csv_results <- c("./CSV/batch 1/CAL",
+                                      "./CSV/batch 2/CAL",
+                                      "./CSV/batch 3/CAL",
+                                      "./CSV/batch 1/GAD67",
+                                      "./CSV/batch 2/GAD67",
+                                      "./CSV/batch 3/GAD67",
+                                      "./CSV/batch 1/PV",
+                                      "./CSV/batch 2/PV",
+                                      "./CSV/batch 3/PV"
+                                      )
+
+funkcja_scalajaca <- function(katalog){
+  
+  lista_plikow <- list.files(path=katalog, full.names = TRUE)
+  lista_plikow_area <- lista_plikow[which(str_detect(lista_plikow, "area"))] #dziele pliki na liczbe i area
+  lista_plikow_liczba <- lista_plikow[which(!str_detect(lista_plikow, "area"))]
+  
+  scalona_area <- lista_plikow_area %>% lapply(read.csv) %>% bind_rows 
+  scalona_area$nazwa_pliku <- lista_plikow_area
+  
+  #everything is in the file name, so I shred it into parts and either select every 6 or every 10 elements
+  #depending on whether I shred with respect to “/” or “/” or “_”
+  #I do the same for area and number files
+  
+  scalona_area$batch <- unlist(str_split(scalona_area$nazwa_pliku, "[/_]"))[seq(3, nrow(scalona_area)*10, 10)] 
+  scalona_area$data <- unlist(str_split(scalona_area$nazwa_pliku, "[/_]"))[seq(5, nrow(scalona_area)*10, 10)]
+  scalona_area$nazwa_bialka <- unlist(str_split(scalona_area$nazwa_pliku, "[/_]"))[seq(4, nrow(scalona_area)*10, 10)]
+  
+  scalona_area$numer_myszy <- unlist(str_split(scalona_area$nazwa_pliku, "_"))[seq(2, nrow(scalona_area)*6, 6)]
+  scalona_area$plec_myszy <- str_sub(scalona_area$numer_myszy, 1, 1)
+  scalona_area$skrawek <- unlist(str_split(scalona_area$nazwa_pliku, "_"))[seq(3, nrow(scalona_area)*6, 6)]
+  scalona_area$bregma <- unlist(str_split(scalona_area$nazwa_pliku, "_"))[seq(4, nrow(scalona_area)*6, 6)]
+  scalona_area$strona_i_struktura <- unlist(str_split(scalona_area$nazwa_pliku, "_"))[seq(5, nrow(scalona_area)*6, 6)]
+  scalona_area$strona <- str_sub(scalona_area$strona_i_struktura, 1, 1)
+  scalona_area$struktura <- str_sub(scalona_area$strona_i_struktura, 2)
+    
+  scalona_liczba <- lista_plikow_liczba %>% lapply(read.csv) %>% bind_rows
+  scalona_liczba$nazwa_pliku <- lista_plikow_liczba
+  
+  scalona_liczba$batch <- unlist(str_split(scalona_liczba$nazwa_pliku, "[/_]"))[seq(3, nrow(scalona_liczba)*10, 10)]
+  scalona_liczba$data <- unlist(str_split(scalona_liczba$nazwa_pliku, "[/_]"))[seq(5, nrow(scalona_liczba)*10, 10)]
+  scalona_liczba$nazwa_bialka <- unlist(str_split(scalona_liczba$nazwa_pliku, "[/_]"))[seq(4, nrow(scalona_liczba)*10, 10)]
+  
+  scalona_liczba$numer_myszy <- unlist(str_split(scalona_liczba$nazwa_pliku, "_"))[seq(2, nrow(scalona_liczba)*6, 6)]
+  scalona_liczba$plec_myszy <- str_sub(scalona_area$numer_myszy, 1, 1)
+  scalona_liczba$skrawek <- unlist(str_split(scalona_liczba$nazwa_pliku, "_"))[seq(3, nrow(scalona_liczba)*6, 6)]
+  scalona_liczba$bregma <- unlist(str_split(scalona_liczba$nazwa_pliku, "_"))[seq(4, nrow(scalona_liczba)*6, 6)]
+  scalona_liczba$strona_i_struktura <- unlist(str_split(scalona_liczba$nazwa_pliku, "_"))[seq(5, nrow(scalona_liczba)*6, 6)]
+  scalona_liczba$strona <- str_sub(scalona_liczba$strona_i_struktura, 1, 1)
+  scalona_liczba$struktura <- str_sub(scalona_liczba$strona_i_struktura, 2)
+ 
+  #merge files
+  scalona_tabela <- left_join(scalona_area, scalona_liczba, by = c('batch', 'data', 'nazwa_bialka', 
+                                                                   'numer_myszy', 'plec_myszy', 'skrawek', 
+                                                                   'bregma', 'strona_i_struktura'))
+
+  #Area verification
+  max.area <- max(scalona_tabela$Area)
+  
+  scalona_tabela %>% mutate(
+    raw_Count = Count,
+    Count = Count*max.area/Area,
+    Average.Size = Average.Size*max.area/Area,
+    `%Area`=X.Area.y*max.area/Area,
+    Mean = Mean.y*max.area/Area
+  ) -> scalona_tabela #we are only using the count result but I am normalising everything for corectness
+  
+  ###removing unnecessary data and naming columns  
+  scalona_tabela <- select(scalona_tabela,  numer_myszy, plec_myszy, batch, data, skrawek, bregma, struktura.x, strona.x, nazwa_bialka,
+                 raw_Count, Count, Total.Area, Average.Size, '%Area', Mean, Area)
+  
+  colnames(scalona_tabela) <- c("mouse_no", "sex", "batch", "date", "slice_no", "bregma", "structure", 
+                                "hemi", "cell", "raw_Count", "Count", "Total.Area", "Average.Size", "%Area", "Mean", "Area")
+  
+  ###add batch as number
+  scalona_tabela$batch_as_number <- as.numeric(str_sub(scalona_tabela$batch, -1))
+  return(scalona_tabela)
+}
+
+###merging everything
+scal_wszystkie_katalogi <- function(lista_katalogow){
+  
+  wszystkie_pliki <- data.frame()
+  
+  for (nazwa_katalogu in lista_katalogow){
+    
+    jeden_plik <- funkcja_scalajaca(nazwa_katalogu)
+    wszystkie_pliki <- bind_rows (wszystkie_pliki, jeden_plik)
+  }
+  
+  return(wszystkie_pliki)
+}
+
+all_raw_results <- scal_wszystkie_katalogi(list_of_folders_with_csv_results)
+
+###add bin information
+ladne_nazwy_binow <- c("1" = "32", "2" = "38", "3" = "43", "4" = "73")
+
+all_raw_results <- mutate(group_by(all_raw_results, mouse_no, structure, sex, batch, date, slice_no, bregma, hemi, cell),
+         Age.Bin = as.character(miniatura_list$Age.Bin[which(miniatura_list$Mouse.identifier == mouse_no)[1]]),
+         Day.Age.Bin = ladne_nazwy_binow[Age.Bin])
+
+###removing outliers
+all_raw_results %>% group_by(Day.Age.Bin, sex, batch, structure, cell) %>% identify_outliers(Count) -> iqr_outliers
+
+###Grubbs similar to code from Stack Overflow https://stackoverflow.com/questions/22837099/how-to-repeat-the-grubbs-test-and-flag-the-outliers
+###modificated
+grubbs.flag <- function(x) {
+  outliers <- NULL
+  test <- x
+  grubbs.result <- grubbs.test(test)
+  pv <- grubbs.result$p.value
+  while(pv < 0.05) {
+    has_anything_been_removed = length(test) ###to dodalem
+    outliers <- c(outliers,as.numeric(strsplit(grubbs.result$alternative," ")[[1]][3]))
+    test <- x[!x %in% outliers]
+    if(length(test) == has_anything_been_removed){return(Outlier=(x %in% outliers))} ###to tez dodalem - bez tego sie zacina w wiecznej petli
+    grubbs.result <- grubbs.test(test)
+    pv <- grubbs.result$p.value
+  }
+  return(Outlier=(x %in% outliers))
+}
+
+
+all_raw_results <- mutate(group_by(all_raw_results, Day.Age.Bin, sex, batch, structure, cell),
+               Grubbs_outlier = grubbs.flag(Count))
+
+all_raw_results %>% write.csv2('all_raw_results.csv')
+
+
+###remove outliers
+all_raw_results_no_outliers <- filter(all_raw_results, Grubbs_outlier == FALSE)
+all_raw_results_no_outliers %>% write.csv2('all_raw_results_no_Grubbs_outliers.csv')
+all_raw_results_only_outliers <- filter(all_raw_results, Grubbs_outlier == TRUE)
+all_raw_results_only_outliers %>% write.csv2('only_Grubbs_outliers.csv')
+
+####
+# 5.	Tabela z informacją, 
+# ile outlierów zostało odrzuconych wśród zdjęć z danego batchu, 
+# płci, binu wiekowego, struktury, kanału (n outiers). 
+# Oraz na ilu zdjęciach był wykonywany test na outliery (n total, oczywiście na grupę).
+####
+
+sections_per_mouse_per_structure_outliers_included <- summarize(group_by(all_raw_results, cell, structure, mouse_no,
+                                                                         sex, batch_as_number, Day.Age.Bin),
+                                                                number_of_sections = length(unique(slice_no)))
+images_per_mouse_per_structure_outliers_included <- summarize(group_by(all_raw_results, cell, structure, mouse_no,
+                                                                       sex, batch_as_number, Day.Age.Bin),
+                                                              total_number_of_images = length(unique(paste(slice_no, hemi))))
+
+sections_per_mouse_per_structure_outliers_NOT_included <- summarize(group_by(all_raw_results_no_outliers, cell, structure, mouse_no,
+                                                                             sex, batch_as_number, Day.Age.Bin),
+                                                                    number_of_sections = length(unique(slice_no)))
+
+images_per_mouse_per_structure_outliers_NOT_included <- summarize(group_by(all_raw_results_no_outliers, cell, structure, mouse_no,
+                                                                           sex, batch_as_number, Day.Age.Bin),
+                                                                  number_of_images = length(unique(paste(slice_no, hemi))))
+
+
+images_per_structure_outliers_included <- summarize(group_by(all_raw_results, cell, structure, 
+                                                                       sex, batch_as_number, Day.Age.Bin),
+                                                              total_number_of_images = length(unique(paste(mouse_no, slice_no, hemi))))
+
+
+images_per_structure_outliers_NOT_included <- summarize(group_by(all_raw_results_no_outliers, cell, structure,
+                                                                           sex, batch_as_number, Day.Age.Bin),
+                                                                  number_of_images = length(unique(paste(mouse_no, slice_no, hemi))))
+
+
+images_per_mouse <- images_per_structure_outliers_included
+
+images_per_mouse$number_of_outliers <- images_per_structure_outliers_included$total_number_of_images - images_per_structure_outliers_NOT_included$number_of_images
+
+write.csv2(images_per_mouse,
+           file = "images_per_group.csv")
+
+#average per mouse per structure
+all_raw_results_no_outliers %>% group_by(cell, structure, mouse_no, batch, batch_as_number, Day.Age.Bin) %>% dplyr::summarize(mean_count = mean(Count, na.rm=TRUE)) -> raw_results_no_outliers
+
+#big "raw" table
+raw_results_no_outliers %>% pivot_wider(names_from = cell,
+                                          values_from = mean_count) %>% pivot_wider(names_from = structure,
+                                                                                    values_from = c(CAL, GAD67, PV)) -> do.miniatury
+
+podsumowanie.wynikow <- left_join(miniatura_list, do.miniatury, by = join_by(Mouse.identifier == mouse_no))
+
+sections_per_mouse_per_structure_outliers_included %>% pivot_wider(names_from = c(structure, cell),
+                        values_from = number_of_sections) -> do.miniatury.liczby.skrawkow
+
+podsumowanie.wynikow <- left_join(podsumowanie.wynikow, do.miniatury.liczby.skrawkow, by = join_by(Mouse.identifier == mouse_no))
+
+
+images_per_mouse_per_structure_outliers_included %>% pivot_wider(names_from = c(structure, cell),
+                                                                   values_from = total_number_of_images) -> do.miniatury.liczby.zdjec
+
+
+podsumowanie.wynikow <- left_join(podsumowanie.wynikow, do.miniatury.liczby.zdjec, by = join_by(Mouse.identifier == mouse_no))
+
+###new column 
+podsumowanie.wynikow$fraction.of.males.in.the.litter.at.weaning <- podsumowanie.wynikow$Number.of.males.in.the.litter.at.weaning/(podsumowanie.wynikow$Number.of.males.in.the.litter.at.weaning + podsumowanie.wynikow$Number.of.females.in.the.litter.at.weaning)
+podsumowanie.wynikow$Testis.weight.at.the.sacrifice.day..mg.[which(str_detect(podsumowanie.wynikow$Mouse.identifier, "F"))] <- NA
+
+colnames(podsumowanie.wynikow) <- c("Sex", "Litter", "Cage", "Mouse", "Birth.date",
+                                    "Sacrifice.date", "Age.at.the.sacrifice.day.including.the.last.day..days",
+                                    "Age.Bin", "Number.of.animals.in.the.cage", "Weight.at.the.sacrifice.day..g",
+                                    "Testis.weight.at.the.sacrifice.day..mg", "Sacrifice.time", "Litter.size.at.birth",
+                                    "Litter.size.the.day.after.birth", "Number.of.males.in.the.litter.at.weaning",
+                                    "Number.of.females.in.the.litter.at.weaning", "Staining.batch", "Mouse.identifier",
+                                    "batch", "batch_as_number.x", "Day.Age.Bin.x",   "OFC_calretinin_cell_number", "PFC_calretinin_cell_number", 
+                                    "OFC_GAD67_cell_number", "PFC_GAD67_cell_number",
+                                    "OFC_parvalbumin_cell_number", "PFC_parvalbumin_cell_number", "sex.x",
+                                    "batch_as_number.y", "Day.Age.Bin.y",
+                                    "OFC_calretinin_section_number", "PFC_calretinin_section_number", 
+                                    "OFC_GAD67_section_number", "PFC_GAD67_section_number",
+                                    "OFC_parvalbumin_section_number", "PFC_parvalbumin_section_number", 
+                                    "sex.y", "batch_as_number", "Day.Age.Bin",
+                                    "OFC_calretinin_image_number", "PFC_calretinin_image_number", 
+                                    "OFC_GAD67_image_number", "PFC_GAD67_image_number",
+                                    "OFC_parvalbumin_image_number", "PFC_parvalbumin_image_number",
+                                    "fraction.of.males.in.the.litter.at.weaning")
+
+podsumowanie.wynikow$Staining.batch <- as.factor(podsumowanie.wynikow$Staining.batch)  
+
+podsumowanie.wynikow <- select(podsumowanie.wynikow, "Mouse.identifier", "batch_as_number", "Staining.batch",
+                               "Day.Age.Bin", "Sex", "Litter", "Cage", "Mouse", "Birth.date",
+                               "Sacrifice.date", "Age.at.the.sacrifice.day.including.the.last.day..days",
+                               "Age.Bin", "Number.of.animals.in.the.cage", "Weight.at.the.sacrifice.day..g",
+                               "Testis.weight.at.the.sacrifice.day..mg", "Sacrifice.time", "Litter.size.at.birth",
+                               "Litter.size.the.day.after.birth", "Number.of.males.in.the.litter.at.weaning",
+                               "Number.of.females.in.the.litter.at.weaning",
+                               "fraction.of.males.in.the.litter.at.weaning",
+                               "OFC_calretinin_cell_number", "PFC_calretinin_cell_number", 
+                               "OFC_GAD67_cell_number", "PFC_GAD67_cell_number",
+                               "OFC_parvalbumin_cell_number", "PFC_parvalbumin_cell_number",
+                               "OFC_calretinin_section_number", "PFC_calretinin_section_number", 
+                               "OFC_GAD67_section_number", "PFC_GAD67_section_number",
+                               "OFC_parvalbumin_section_number", "PFC_parvalbumin_section_number", 
+                               "OFC_calretinin_image_number", "PFC_calretinin_image_number", 
+                               "OFC_GAD67_image_number", "PFC_GAD67_image_number",
+                               "OFC_parvalbumin_image_number", "PFC_parvalbumin_image_number")
+
+
+###remove mouse with NA batch
+podsumowanie.wynikow <- filter(podsumowanie.wynikow, is.finite(batch_as_number))
+write.csv2(podsumowanie.wynikow, file = "podsumowanie_wynikow.csv")
+
+###summary results
+podsumowanie.long <- pivot_longer(podsumowanie.wynikow[,c (1:27)], cols = 22:27, names_to = "structure_protein", values_to = "cell_number")
+
+################
+####ANOVA females
+################
+
+OFC_F_PV_1_3 <- as.data.frame(summary(aov(cell_number~Staining.batch*Day.Age.Bin, 
+                            data = filter(podsumowanie.long, Sex == "F", structure_protein == "OFC_parvalbumin_cell_number")))[[1]])
+OFC_F_PV_1_3$parameter <- str_trim(rownames(OFC_F_PV_1_3))
+OFC_F_PV_1_3$structure <- "OFC"
+OFC_F_PV_1_3$protein   <- "parvalbumin"
+OFC_F_PV_1_3$sex <- "F"
+
+################
+PFC_F_PV_1_3 <- as.data.frame(summary(aov(cell_number~Staining.batch*Day.Age.Bin, 
+                                          data = filter(podsumowanie.long, Sex == "F", structure_protein == "PFC_parvalbumin_cell_number")))[[1]])
+PFC_F_PV_1_3$parameter <- str_trim(rownames(PFC_F_PV_1_3))
+PFC_F_PV_1_3$structure <- "PFC"
+PFC_F_PV_1_3$protein   <- "parvalbumin"
+PFC_F_PV_1_3$sex <- "F"
+
+##############
+OFC_F_CAL_1_3 <- as.data.frame(summary(aov(cell_number~Staining.batch*Day.Age.Bin, 
+                                          data = filter(podsumowanie.long, Sex == "F", structure_protein == "OFC_calretinin_cell_number")))[[1]])
+OFC_F_CAL_1_3$parameter <- str_trim(rownames(OFC_F_CAL_1_3))
+OFC_F_CAL_1_3$structure <- "OFC"
+OFC_F_CAL_1_3$protein   <- "calretinin"
+OFC_F_CAL_1_3$sex <- "F"
+
+#############
+PFC_F_CAL_1_3 <- as.data.frame(summary(aov(cell_number~Staining.batch*Day.Age.Bin, 
+                                          data = filter(podsumowanie.long, Sex == "F", structure_protein == "PFC_calretinin_cell_number")))[[1]])
+PFC_F_CAL_1_3$parameter <- str_trim(rownames(PFC_F_CAL_1_3))
+PFC_F_CAL_1_3$structure <- "PFC"
+PFC_F_CAL_1_3$protein   <- "calretinin"
+PFC_F_CAL_1_3$sex <- "F"
+
+##############
+OFC_F_GAD_1_3 <- as.data.frame(summary(aov(cell_number~Staining.batch*Day.Age.Bin, 
+                                           data = filter(podsumowanie.long, Sex == "F", structure_protein == "OFC_GAD67_cell_number")))[[1]])
+OFC_F_GAD_1_3$parameter <- str_trim(rownames(OFC_F_GAD_1_3))
+OFC_F_GAD_1_3$structure <- "OFC"
+OFC_F_GAD_1_3$protein   <- "GAD67"
+OFC_F_GAD_1_3$sex <- "F"
+
+#############
+PFC_F_GAD_1_3 <- as.data.frame(summary(aov(cell_number~Staining.batch*Day.Age.Bin, 
+                                           data = filter(podsumowanie.long, Sex == "F", structure_protein == "PFC_GAD67_cell_number")))[[1]])
+PFC_F_GAD_1_3$parameter <- str_trim(rownames(PFC_F_GAD_1_3))
+PFC_F_GAD_1_3$structure <- "PFC"
+PFC_F_GAD_1_3$protein   <- "GAD67"
+PFC_F_GAD_1_3$sex <- "F"
+
+#####################
+#ANOVA males
+#####################
+
+OFC_M_PV_2_3 <- as.data.frame(summary(aov(cell_number~Staining.batch*Day.Age.Bin, 
+                                          data = filter(podsumowanie.long, Sex == "M", structure_protein == "OFC_parvalbumin_cell_number")))[[1]])
+OFC_M_PV_2_3$parameter <- str_trim(rownames(OFC_M_PV_2_3))
+OFC_M_PV_2_3$structure <- "OFC"
+OFC_M_PV_2_3$protein   <- "parvalbumin"
+OFC_M_PV_2_3$sex <- "M"
+
+################
+PFC_M_PV_2_3 <- as.data.frame(summary(aov(cell_number~Staining.batch*Day.Age.Bin, 
+                                          data = filter(podsumowanie.long, Sex == "M", structure_protein == "PFC_parvalbumin_cell_number")))[[1]])
+PFC_M_PV_2_3$parameter <- str_trim(rownames(PFC_M_PV_2_3))
+PFC_M_PV_2_3$structure <- "PFC"
+PFC_M_PV_2_3$protein   <- "parvalbumin"
+PFC_M_PV_2_3$sex <- "M"
+
+##############
+OFC_M_CAL_2_3 <- as.data.frame(summary(aov(cell_number~Staining.batch*Day.Age.Bin, 
+                                           data = filter(podsumowanie.long, Sex == "M", structure_protein == "OFC_calretinin_cell_number")))[[1]])
+OFC_M_CAL_2_3$parameter <- str_trim(rownames(OFC_M_CAL_2_3))
+OFC_M_CAL_2_3$structure <- "OFC"
+OFC_M_CAL_2_3$protein   <- "calretinin"
+OFC_M_CAL_2_3$sex <- "M"
+
+#############
+PFC_M_CAL_2_3 <- as.data.frame(summary(aov(cell_number~Staining.batch*Day.Age.Bin, 
+                                           data = filter(podsumowanie.long, Sex == "M", structure_protein == "PFC_calretinin_cell_number")))[[1]])
+PFC_M_CAL_2_3$parameter <- str_trim(rownames(PFC_M_CAL_2_3))
+PFC_M_CAL_2_3$structure <- "PFC"
+PFC_M_CAL_2_3$protein   <- "calretinin"
+PFC_M_CAL_2_3$sex <- "M"
+
+##############
+OFC_M_GAD_2_3 <- as.data.frame(summary(aov(cell_number~Staining.batch*Day.Age.Bin, 
+                                           data = filter(podsumowanie.long, Sex == "M", structure_protein == "OFC_GAD67_cell_number")))[[1]])
+OFC_M_GAD_2_3$parameter <- str_trim(rownames(OFC_M_GAD_2_3))
+OFC_M_GAD_2_3$structure <- "OFC"
+OFC_M_GAD_2_3$protein   <- "GAD67"
+OFC_M_GAD_2_3$sex <- "M"
+
+#############
+PFC_M_GAD_2_3 <- as.data.frame(summary(aov(cell_number~Staining.batch*Day.Age.Bin, 
+                                           data = filter(podsumowanie.long, Sex == "M", structure_protein == "PFC_GAD67_cell_number")))[[1]])
+PFC_M_GAD_2_3$parameter <- str_trim(rownames(PFC_M_GAD_2_3))
+PFC_M_GAD_2_3$structure <- "PFC"
+PFC_M_GAD_2_3$protein   <- "GAD67"
+PFC_M_GAD_2_3$sex <- "M"
+
+####all ANOVA results
+
+wyniki_ANOVA <- bind_rows(OFC_F_PV_1_3, PFC_F_PV_1_3, OFC_F_CAL_1_3, PFC_F_CAL_1_3, OFC_F_GAD_1_3, PFC_F_GAD_1_3,
+                          OFC_M_PV_2_3, PFC_M_PV_2_3, OFC_M_CAL_2_3, PFC_M_CAL_2_3, OFC_M_GAD_2_3, PFC_M_GAD_2_3)
+rownames(wyniki_ANOVA) <- c(1:nrow(wyniki_ANOVA ))
+
+colnames(wyniki_ANOVA)[5] <- "P"
+
+wyniki_ANOVA <- select(wyniki_ANOVA, "parameter","sex", "structure", "protein", "Df", "Sum Sq", "Mean Sq", "F value", "P")
+
+write.csv2(wyniki_ANOVA, file = "wyniki_ANOVA.csv")
+
+####differences between averages
+wyniki_do_normalizacji <- mutate(group_by(filter(wyniki_ANOVA, parameter == "Staining.batch"), sex, structure, protein),
+                                 normalizacja_potencjalnie_wymagana = (P<0.05),
+                                 wartosc_do_normalizacji = colnames(podsumowanie.wynikow)[which(str_detect(colnames(podsumowanie.wynikow), protein) &
+                                                                                                  str_detect(colnames(podsumowanie.wynikow), structure) &
+                                                                                                  str_detect(colnames(podsumowanie.wynikow), "cell"))],
+                                 normalizowany_batch = ifelse(sex == "F", "1", "2"),
+                                 iloraz_do_sredniej_batch_3 = mean(podsumowanie.long$cell_number[which((podsumowanie.long$batch_as_number == 3) & 
+                                                                                                          (podsumowanie.long$Sex == sex) &
+                                                                                                          (podsumowanie.long$structure_protein == wartosc_do_normalizacji))], na.rm = TRUE) / 
+                                   mean(podsumowanie.long$cell_number[which((podsumowanie.long$batch_as_number == normalizowany_batch) & 
+                                                                              (podsumowanie.long$Sex == sex) &
+                                                                              (podsumowanie.long$structure_protein == wartosc_do_normalizacji))], na.rm = TRUE)
+)
+
+
+write.csv2(wyniki_do_normalizacji, file = "wyniki_do_normalizacji.csv")
+
+###selecting mouse for normalization
+check_normalization <- function(Sex, Protein, Structure, Batch){
+  sprawdz.czy.jest.normalizacja <- filter(wyniki_do_normalizacji, sex == Sex, 
+                                          structure == Structure, protein == Protein, 
+                                          normalizowany_batch == as.character(Batch))
+
+  
+  if(nrow(sprawdz.czy.jest.normalizacja)>0){ 
+    normalizacja = sprawdz.czy.jest.normalizacja$iloraz_do_sredniej_batch_3}else{
+      normalizacja = 0}
+  
+  return(normalizacja)
+}
+
+podsumowanie_z_normalizacja <- mutate(group_by(podsumowanie.wynikow, Mouse.identifier),
+                                      normalized_OFC_calretinin_cell_number = OFC_calretinin_cell_number * check_normalization(Sex, "calretinin", "OFC", batch_as_number),
+                                      normalized_PFC_calretinin_cell_number = PFC_calretinin_cell_number * check_normalization(Sex, "calretinin", "PFC", batch_as_number),
+                                      normalized_OFC_GAD67_cell_number = OFC_GAD67_cell_number * check_normalization(Sex, "GAD67", "OFC", batch_as_number),
+                                      normalized_PFC_GAD67_cell_number = PFC_GAD67_cell_number * check_normalization(Sex, "GAD67", "PFC", batch_as_number),
+                                      normalized_OFC_parvalbumin_cell_number = OFC_parvalbumin_cell_number * check_normalization(Sex, "parvalbumin", "OFC", batch_as_number),
+                                      normalized_PFC_parvalbumin_cell_number = PFC_parvalbumin_cell_number * check_normalization(Sex, "parvalbumin", "PFC", batch_as_number)
+)
+
+write.csv2(podsumowanie_z_normalizacja, file = "podsumowanie_z_normalizacja_iloraz_wszystko.csv")
